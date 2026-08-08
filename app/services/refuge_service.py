@@ -1,8 +1,6 @@
-import csv
 import math
-from pathlib import Path
 
-from app.core.config import REFUGE_DATA_PATH
+from app.core.database import DatabaseClient, MySQLClient
 from app.schemas.refuge import NearbyRefuge
 
 
@@ -10,38 +8,23 @@ TYPE_BY_SUB_THEME = {
     "Informal Outdoor Facility (Park/Garden/Reserve)": "park",
     "Library": "library",
 }
-REQUIRED_CSV_FIELDS = {
-    "landmark_id",
-    "feature_name",
-    "sub_theme",
-    "latitude",
-    "longitude",
-    "is_refuge_candidate",
-}
+NEARBY_QUERY = """
+SELECT landmark_id, feature_name, sub_theme, latitude, longitude
+FROM backend_refuge_candidates
+WHERE is_refuge_candidate = 1
+"""
 
 
 class RefugeService:
-    def __init__(self, data_path: Path | None = None) -> None:
-        self._data_path = data_path or REFUGE_DATA_PATH
+    def __init__(self, database_client: DatabaseClient | None = None) -> None:
+        self._database_client = database_client or MySQLClient()
 
     def find_nearby(self, latitude: float, longitude: float, radius_m: float) -> list[NearbyRefuge]:
-        with self._data_path.open(encoding="utf-8", newline="") as file:
-            reader = csv.DictReader(file)
-            fieldnames = set(reader.fieldnames or [])
-            missing_fields = REQUIRED_CSV_FIELDS - fieldnames
-            if missing_fields:
-                missing = ", ".join(sorted(missing_fields))
-                raise ValueError(f"Refuge CSV is missing required fields: {missing}")
-
-            refuges = [
-                refuge
-                for refuge in reader
-                if refuge["is_refuge_candidate"].strip().lower() == "true"
-            ]
+        refuges = self._database_client.fetch_all(NEARBY_QUERY)
 
         nearby_refuges: list[NearbyRefuge] = []
         for refuge in refuges:
-            refuge_type = TYPE_BY_SUB_THEME.get(refuge["sub_theme"].strip())
+            refuge_type = TYPE_BY_SUB_THEME.get(str(refuge["sub_theme"]).strip())
             if refuge_type is None:
                 continue
 
@@ -56,8 +39,8 @@ class RefugeService:
             if distance_m <= radius_m:
                 nearby_refuges.append(
                     NearbyRefuge(
-                        id=refuge["landmark_id"],
-                        name=refuge["feature_name"],
+                        id=str(refuge["landmark_id"]),
+                        name=str(refuge["feature_name"]),
                         type=refuge_type,
                         distance_m=round(distance_m, 2),
                         latitude=refuge_latitude,
