@@ -1,0 +1,17 @@
+﻿__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite3
+coverage.xml
+htmlcov/
+.vscode/
+.idea/
+DEVELOPMENT_ROADMAP.md
