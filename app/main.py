@@ -1,9 +1,20 @@
 ﻿from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 
 app = FastAPI(
     title="CalmPath Backend",
     version="0.1.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "https://fit5120-2026s2-tp10.github.io",
+    ],
+    allow_methods=["GET"],
+    allow_headers=["*"],
 )
 
 
