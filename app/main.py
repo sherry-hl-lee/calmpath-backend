@@ -12,6 +12,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "https://fit5120-2026s2-tp10.github.io",
+        "https://calmpath-tp10.netlify.app",
     ],
     allow_methods=["GET"],
     allow_headers=["*"],
