@@ -1,0 +1,31 @@
+name: AWS permission check
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  check-aws-permissions:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::057654277689:role/fit5120-backend-github-actions
+          aws-region: ap-southeast-4
+
+      - name: Check AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Check ECS task definition permission
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition fit5120-backend \
+            --region ap-southeast-4
