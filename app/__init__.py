@@ -1,1 +1,1 @@
-﻿
+"""CalmPath backend package."""
