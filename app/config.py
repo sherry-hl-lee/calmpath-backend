@@ -17,6 +17,19 @@ CROWD_THRESHOLD_VERSION = "provisional-dmp-v1"
 SENSORY_LEVEL_BASIS = "PEDESTRIAN_CROWD_ONLY"
 LIVE_REQUEST_WINDOW_MINUTES = 15
 MINIMUM_CROWD_COVERAGE_FOR_RECOMMENDATION = 0.60
+SUPPORTED_DATA_SOURCES = {"fake", "rds"}
+
+
+def data_source_from_environment() -> str:
+    """Return the explicitly selected application repository mode."""
+
+    value = os.getenv("DATA_SOURCE", "").strip().lower()
+    if value not in SUPPORTED_DATA_SOURCES:
+        supported = ", ".join(sorted(SUPPORTED_DATA_SOURCES))
+        raise RuntimeError(
+            f"Unsupported DATA_SOURCE {value!r}. Set DATA_SOURCE to one of: {supported}."
+        )
+    return value
 
 
 def cors_allowed_origins() -> list[str]:
@@ -53,18 +66,25 @@ class DatabaseSettings:
 
     @classmethod
     def from_environment(cls) -> "DatabaseSettings":
-        missing = [name for name in ("MYSQL_HOST", "MYSQL_USER", "MYSQL_PASSWORD") if not os.getenv(name)]
+        required = (
+            "RDS_HOST",
+            "RDS_PORT",
+            "RDS_DATABASE",
+            "RDS_USER",
+            "RDS_PASSWORD",
+        )
+        missing = [name for name in required if not os.getenv(name)]
         if missing:
             raise RuntimeError(
                 "Missing required RDS configuration: " + ", ".join(missing) + ". "
                 "Set these environment variables or load them from AWS Secrets Manager."
             )
         return cls(
-            host=os.environ["MYSQL_HOST"],
-            port=int(os.getenv("MYSQL_PORT", "3306")),
-            database=os.getenv("MYSQL_DATABASE", "fit5120_data"),
-            user=os.environ["MYSQL_USER"],
-            password=os.environ["MYSQL_PASSWORD"],
-            ssl_ca=os.getenv("MYSQL_SSL_CA") or None,
-            connect_timeout_seconds=int(os.getenv("MYSQL_CONNECT_TIMEOUT_SECONDS", "10")),
+            host=os.environ["RDS_HOST"],
+            port=int(os.environ["RDS_PORT"]),
+            database=os.environ["RDS_DATABASE"],
+            user=os.environ["RDS_USER"],
+            password=os.environ["RDS_PASSWORD"],
+            ssl_ca=os.getenv("RDS_SSL_CA") or None,
+            connect_timeout_seconds=int(os.getenv("RDS_CONNECT_TIMEOUT_SECONDS", "10")),
         )

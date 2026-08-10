@@ -11,21 +11,33 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Before running locally, set the RDS connection environment variables. Obtain
-the real read-only values through AWS Secrets Manager; do not commit them.
+For local frontend integration, select the deterministic fake repository. It
+uses the same RoutingService, endpoints, request schema, response schema, and
+crowd-scoring code as RDS mode, but never opens a MySQL connection. Its values
+are synthetic historical patterns, so fake responses intentionally report
+`current_data_used: false` and must not be presented as real-time data:
 
 ```powershell
-$env:MYSQL_HOST = "your-rds-endpoint.amazonaws.com"
-$env:MYSQL_PORT = "3306"
-$env:MYSQL_DATABASE = "fit5120_data"
-$env:MYSQL_USER = "fit5120_app"
-$env:MYSQL_PASSWORD = "<secret>"
+$env:DATA_SOURCE = "fake"
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+```
+
+For ECS, explicitly select RDS and inject the real read-only values through AWS
+Secrets Manager; do not commit them:
+
+```powershell
+$env:DATA_SOURCE = "rds"
+$env:RDS_HOST = "your-rds-endpoint.amazonaws.com"
+$env:RDS_PORT = "3306"
+$env:RDS_DATABASE = "fit5120_data"
+$env:RDS_USER = "fit5120_app"
+$env:RDS_PASSWORD = "<secret>"
 $env:CORS_ALLOWED_ORIGINS = "http://localhost:5173,https://dpevp4238kw5k.cloudfront.net,https://calmpath-tp10.netlify.app"
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
 Use [.env.example](.env.example) as the variable reference. In ECS, inject the
-same values from AWS Secrets Manager. The frontend must never connect to RDS.
+RDS values from AWS Secrets Manager. The frontend must never connect to RDS.
 The contract identifies RDS as private; run the API from an approved ECS/VPC
 network path or a team-provided secure tunnel, not an ordinary public desktop
 connection.
@@ -145,6 +157,16 @@ The automated suite uses an in-memory graph and does not connect to RDS:
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
 ```
+
+The application itself can also be smoke-tested without RDS:
+
+```powershell
+$env:DATA_SOURCE = "fake"
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+```
+
+Then call `GET http://127.0.0.1:8000/api/v1/health` and
+`POST http://127.0.0.1:8000/api/v1/routes/compare` with the request shown above.
 
 See [RDS_INTEGRATION.md](RDS_INTEGRATION.md) for the tables, joins, and
 freshness rules. The congestion thresholds are prototype values, not official
