@@ -64,6 +64,8 @@ class CurrentContext:
     coverage_status: str
     as_of: Optional[str]
     source_observed_at: Optional[str]
+    sensor_count: int
+    aggregation_method: Optional[str]
 
 
 def _optional_text(value: Optional[str]) -> Optional[str]:
@@ -209,15 +211,15 @@ class RdsRepository:
     def refresh_current_contexts(self) -> None:
         """Derive fresh edge observations from the 15-minute minute-count table.
 
-        For an edge with more than one current mapped sensor, the crowd count is
-        the arithmetic mean of the current ``count_total`` values. This avoids
-        double-counting pedestrians from nearby sensors; it is a documented
-        prototype aggregation rule that should be approved before production.
+        For an edge with more than one current mapped sensor, the maximum current
+        ``count_total`` is used. Crowd-avoidance routing should not hide a busy
+        part of an edge by averaging it with a quiet nearby sensor.
         """
         query = """
             WITH latest_observation AS (
                 SELECT location_id, MAX(observed_at_utc) AS observed_at_utc
                 FROM clean_pedestrian_minute
+                WHERE observed_at_utc <= UTC_TIMESTAMP()
                 GROUP BY location_id
             ),
             latest_count AS (
@@ -226,24 +228,63 @@ class RdsRepository:
                 JOIN latest_observation AS latest
                   ON latest.location_id = p.location_id
                  AND latest.observed_at_utc = p.observed_at_utc
+            ),
+            edge_freshness AS (
+                SELECT
+                    map.edge_id,
+                    MIN(TIMESTAMPDIFF(
+                        SECOND, counts.observed_at_utc, UTC_TIMESTAMP()
+                    )) AS newest_age_seconds
+                FROM backend_sensor_edge_map AS map
+                LEFT JOIN latest_count AS counts
+                  ON counts.location_id = map.location_id
+                WHERE map.edge_id IS NOT NULL
+                GROUP BY map.edge_id
+            ),
+            current_sensor AS (
+                SELECT
+                    map.edge_id,
+                    map.location_id,
+                    counts.observed_at_utc,
+                    counts.count_total
+                FROM backend_sensor_edge_map AS map
+                JOIN latest_count AS counts
+                  ON counts.location_id = map.location_id
+                WHERE map.edge_id IS NOT NULL
+                  AND counts.observed_at_utc >= UTC_TIMESTAMP() - INTERVAL 30 MINUTE
+            ),
+            current_edge_statistics AS (
+                SELECT
+                    edge_id,
+                    COUNT(DISTINCT location_id) AS current_sensor_count,
+                    MAX(count_total) AS current_crowd_count
+                FROM current_sensor
+                GROUP BY edge_id
+            ),
+            current_edge AS (
+                SELECT
+                    statistics.edge_id,
+                    statistics.current_sensor_count,
+                    statistics.current_crowd_count,
+                    MAX(sensor.observed_at_utc) AS source_observed_at
+                FROM current_edge_statistics AS statistics
+                JOIN current_sensor AS sensor
+                  ON sensor.edge_id = statistics.edge_id
+                 AND sensor.count_total = statistics.current_crowd_count
+                GROUP BY
+                    statistics.edge_id,
+                    statistics.current_sensor_count,
+                    statistics.current_crowd_count
             )
             SELECT
-                map.edge_id,
-                MAX(counts.observed_at_utc) AS source_observed_at,
-                MIN(TIMESTAMPDIFF(SECOND, counts.observed_at_utc, UTC_TIMESTAMP())) AS newest_age_seconds,
-                COUNT(DISTINCT CASE
-                    WHEN counts.observed_at_utc >= UTC_TIMESTAMP() - INTERVAL 30 MINUTE
-                    THEN map.location_id
-                END) AS current_sensor_count,
-                AVG(CASE
-                    WHEN counts.observed_at_utc >= UTC_TIMESTAMP() - INTERVAL 30 MINUTE
-                    THEN counts.count_total
-                END) AS current_crowd_count
-            FROM backend_sensor_edge_map AS map
-            LEFT JOIN latest_count AS counts
-              ON counts.location_id = map.location_id
-            WHERE map.edge_id IS NOT NULL
-            GROUP BY map.edge_id
+                freshness.edge_id,
+                current.source_observed_at,
+                freshness.newest_age_seconds,
+                COALESCE(current.current_sensor_count, 0) AS current_sensor_count,
+                current.current_crowd_count
+            FROM edge_freshness AS freshness
+            LEFT JOIN current_edge AS current
+              ON current.edge_id = freshness.edge_id
         """
         contexts: dict[str, CurrentContext] = {}
         with self._connection() as connection:
@@ -275,5 +316,7 @@ class RdsRepository:
                 coverage_status=coverage_status,
                 as_of=evaluated_at,
                 source_observed_at=_utc_iso(row["source_observed_at"]),
+                sensor_count=current_sensor_count,
+                aggregation_method="maximum" if current_sensor_count else None,
             )
         self.contexts = contexts

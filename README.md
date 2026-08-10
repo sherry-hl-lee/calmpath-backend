@@ -20,6 +20,7 @@ $env:MYSQL_PORT = "3306"
 $env:MYSQL_DATABASE = "fit5120_data"
 $env:MYSQL_USER = "fit5120_app"
 $env:MYSQL_PASSWORD = "<secret>"
+$env:CORS_ALLOWED_ORIGINS = "http://localhost:5173,https://dpevp4238kw5k.cloudfront.net,https://calmpath-tp10.netlify.app"
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
@@ -35,14 +36,14 @@ Open <http://127.0.0.1:8000/docs> to use the interactive API documentation.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/` | Service information |
-| `GET` | `/health` | Confirms loaded data counts |
-| `GET` | `/edges/{edge_id}?weekday_index=0&local_hour=12` | Returns an edge and its current/historical crowd estimate |
-| `POST` | `/routes/compare` | Compares shortest and crowd-aware walking routes |
+| `GET` | `/api/v1/health` | Confirms loaded data counts |
+| `GET` | `/api/v1/edges/{edge_id}?weekday_index=0&local_hour=12&use_current=true` | Returns an edge and its current/historical crowd estimate |
+| `POST` | `/api/v1/routes/compare` | Compares shortest and crowd-aware walking routes |
 
 Example edge request:
 
 ```text
-GET /edges/edge_051a94ac5e0e70bf844cc3b0?weekday_index=0&local_hour=7
+GET /api/v1/edges/edge_051a94ac5e0e70bf844cc3b0?weekday_index=0&local_hour=7&use_current=true
 ```
 
 Example route request (coordinates are snapped to the nearest routing node):
@@ -59,12 +60,33 @@ The frontend supplies coordinates only. `origin_node_id` and
 `destination_node_id` in the response are calculated by the backend and are
 included only for debugging and traceability.
 
-The response includes route edge IDs, GeoJSON LineString geometry, walking
-time, evidence-backed `crowd_exposure`, and data coverage fields. The separate
-`routing_crowd_cost` includes the temporary unknown-data penalty used during
-search; it is not a measured pedestrian count. `current_data_used` is `true`
-only for a departure time close to now; a past or future planned trip uses
-historical patterns instead.
+The response includes ordered `segments` so the frontend can colour each
+GeoJSON LineString as `LOW`, `MEDIUM`, `HIGH`, or `UNKNOWN`. Every segment has
+an explicit one-based `sequence`, `crowd_level`, crowd-derived `sensory_level`,
+and `limited_data`; clients do not need to infer these values. GeoJSON coordinates
+remain in standard `[longitude, latitude]` order. Each segment separates an
+evidence-backed `crowd_score` from an optional unknown-data `routing_penalty`.
+
+`crowd_exposure` is the known-distance-weighted mean crowd count and
+`data_coverage_ratio` is known distance divided by total route distance. The
+separate `routing_crowd_cost` is a distance-scaled penalty in seconds used by
+route search; it is not a measured pedestrian count. `current_data_used` is
+`true` only when at least one segment in the response actually uses a live
+observation. A past/future trip, or a current request that falls back entirely
+to historical/unknown data, returns `false`.
+
+The frontend should branch on `recommendation_status`, not parse the English
+`recommendation_note`. Possible values are `LOWER_CROWD`,
+`SHORTEST_ALREADY_BEST`, `INSUFFICIENT_DATA`, and `NO_ALTERNATIVE`.
+
+Every route also returns:
+
+- `crowd_level`: route-level `LOW`, `MEDIUM`, or `HIGH`, or null for limited data;
+- `sensory_level`: currently the same level, with
+  `sensory_level_basis: "PEDESTRIAN_CROWD_ONLY"`;
+- `limited_data`: true when known-distance coverage is below 0.60;
+- `minimum_required_coverage_ratio`, `known_distance_m`, and
+  `unknown_distance_m` so the frontend does not need hidden rules.
 
 ## Crowd scoring rule
 
@@ -82,9 +104,47 @@ for the requested weekday/hour. If neither source has data, the API reports
 the edge as unknown and uses a prototype penalty of 75 for routing. Unknown is
 never interpreted as low crowding.
 
-When either route has below 60% known crowd coverage, the API returns an
+When several current sensors map to one edge, the highest count is used and the
+segment reports `aggregation_method: "maximum"`. `evaluated_at` is the backend
+evaluation time, while `observed_at` is the actual source observation time.
+
+When either route has below 60% known-distance crowd coverage, the API returns an
 insufficient-coverage note instead of claiming that the recommended route is
 genuinely quieter.
+
+## Units and crowd levels
+
+Live records are counts for one observed minute. Historical patterns are means
+of hourly totals and are divided by 60 before use. Consequently segment scores
+and `crowd_exposure` use `pedestrians_per_minute`, with a minimum of zero and no
+fixed maximum.
+
+The `provisional-dmp-v1` thresholds are:
+
+```yaml
+LOW:    <= 50 pedestrians/minute
+MEDIUM: <= 150 pedestrians/minute
+HIGH:   > 150 pedestrians/minute
+```
+
+The thresholds match the current published data-package rule and remain
+prototype values requiring team and mentor calibration.
+
+## CloudFront deployment requirement
+
+FastAPI now accepts JSON POST preflight requests from
+`https://calmpath-tp10.netlify.app`. The CloudFront behaviour for `/api/v1/*`
+must separately allow POST and OPTIONS, forward the CORS request headers, and
+avoid caching POST responses. This infrastructure setting is outside this
+backend repository.
+
+## Local US1.2 tests
+
+The automated suite uses an in-memory graph and does not connect to RDS:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
 
 See [RDS_INTEGRATION.md](RDS_INTEGRATION.md) for the tables, joins, and
 freshness rules. The congestion thresholds are prototype values, not official
