@@ -8,6 +8,7 @@ on:
     branches:
       - main
       - workflows
+      - ci-docker-build
   workflow_dispatch:
 
 permissions:
@@ -32,3 +33,23 @@ jobs:
 
       - name: Run tests
         run: python -m pytest
+
+  build:
+    name: Build Docker image
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          tags: calmpath-backend:${{ github.sha }}
