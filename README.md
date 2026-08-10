@@ -97,6 +97,11 @@ OpenRouteService remains the temporary walking route generator. Tram and train
 markers come from the official Victorian GTFS feed because those datasets are
 not currently published to RDS.
 
+The default ORS endpoint uses the current HeiGIT host:
+`https://api.heigit.org/openrouteservice/v2/directions/foot-walking/geojson`.
+`ORS_BASE_URL` may be set explicitly if the provider changes the endpoint in a
+future release.
+
 ### Runtime modes
 
 | Setting | Route geometry | Sensory data | Transport access points |

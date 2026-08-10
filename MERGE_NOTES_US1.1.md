@@ -1,9 +1,10 @@
 # US1.1 merge notes
 
-This package is based on the downloaded backend archive at commit:
+This package applies the US1.1 implementation to the downloaded feature-branch
+archive at commit:
 
 ```text
-ce1a464f65bed1f175be8eb75f411b587b6d494b
+f68c9cee777cb2d95830dd9bb982af7645df4a91
 ```
 
 ## Preserved behaviour
@@ -49,10 +50,13 @@ to sensor coordinates for the MVP. A future version can match the geometry to
 reliable edge-level scoring. Victorian GTFS remains the external source for
 tram/train stops because they are not published to RDS.
 
+The ORS default URL uses the current HeiGIT API host rather than the deprecated
+`api.openrouteservice.org` host.
+
 ## Verification
 
 ```text
-35 tests passed
+36 tests passed
 ```
 
 The tests cover existing health/refuge/address behaviour and the new US1.1 API,
