@@ -103,6 +103,10 @@ jobs:
               .tags
             )
             | (.containerDefinitions[] | select(.name == $container) | .image) = $image
+            | (.containerDefinitions[] | select(.name == $container) | .environment) |=
+                ((. // [])
+                  | map(select(.name != "DATA_SOURCE"))
+                  + [{"name": "DATA_SOURCE", "value": "rds"}])
           ' task-definition.json > task-definition-rendered.json
 
       - name: Register new ECS task definition
