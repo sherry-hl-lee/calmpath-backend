@@ -1,6 +1,7 @@
 ﻿fastapi
 uvicorn[standard]
 pytest
+pytest-asyncio
 httpx
 python-dotenv
 mysql-connector-python
