@@ -179,20 +179,31 @@ Melbourne congestion standards.
 The service also retains the existing refuge and reverse-geocoding APIs from the
 main CalmPath backend.
 
+Implemented user stories:
+
+- US1.1: sensory indicators for Melbourne CBD walking routes;
+- US2.1: nearby quiet refuges and selected-refuge addresses.
+
 ## Local setup
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+& "$PWD\.venv\Scripts\python.exe" -m pip install -r requirements.txt
+$env:DATA_SOURCE = "fake"
+& "$PWD\.venv\Scripts\python.exe" -m uvicorn app.main:app --reload
 ```
 
 Open the FastAPI documentation at `http://127.0.0.1:8000/docs`.
 
-Before running against the deployment database, provide the RDS connection
-settings through environment variables. Do not commit real passwords, secrets,
-API keys, or private paths.
+Fake mode is the local default for US1.1. It returns three deterministic route
+options demonstrating `High`, `Low`, and `Limited Data`, plus demo tram/train
+access points. It does not create a MySQL client, call OpenRouteService, or
+download GTFS. Fake values are development fixtures, not real Melbourne data.
+
+To use real US1.1 data, set `DATA_SOURCE=rds` and provide the RDS and ORS
+configuration through environment variables/Secrets Manager. Do not commit
+real passwords, secrets, API keys, or private paths. Refuge endpoints continue
+to require RDS in both modes; `DATA_SOURCE` switches only US1.1 route providers.
 
 ## Refuge data source
 
@@ -244,3 +255,37 @@ app/
 tests/           automated tests
 docs/api/        short API contracts
 ```
+
+## US1.1 route planning
+
+`GET /api/v1/routes` accepts origin and destination coordinates as query
+parameters. It returns walking route GeoJSON, `High`/`Low`/`Limited Data`
+sensory indicators, and nearby metropolitan tram/train stops. See
+`docs/US1.1_API.md` for the complete frontend contract and current data-source
+boundary.
+
+Real walking route generation requires `ORS_API_KEY` in the local environment
+or ECS task definition. Do not commit the key. US1.1 reads active sensor
+locations from `clean_sensor_locations` and the latest published counts from
+`clean_pedestrian_minute`. Counts older than the 30-minute current-data limit
+produce `Limited Data`. Existing refuge endpoints continue to use MySQL RDS.
+
+OpenRouteService remains the temporary walking route generator. Tram and train
+markers come from the official Victorian GTFS feed because those datasets are
+not currently published to RDS.
+
+The default ORS endpoint uses the current HeiGIT host:
+`https://api.heigit.org/openrouteservice/v2/directions/foot-walking/geojson`.
+`ORS_BASE_URL` may be set explicitly if the provider changes the endpoint in a
+future release.
+
+### Runtime modes
+
+| Setting | Route geometry | Sensory data | Transport access points |
+| --- | --- | --- | --- |
+| `DATA_SOURCE=fake` | Deterministic in memory | Deterministic in memory | Demo tram/train points |
+| `DATA_SOURCE=rds` | OpenRouteService | MySQL RDS | Official Victorian GTFS |
+
+The application defaults to fake mode when run directly for local development.
+The Docker image defaults to `DATA_SOURCE=rds`; ECS should also set it
+explicitly. An unknown value is rejected during application import/startup.

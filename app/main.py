@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.refuges import router as refuge_router
+from app.api.routes.routes import router as route_router
 from app.api.routes.routing import router as routing_router
 from app.core.routing_config import (
     DatabaseSettings,
@@ -59,6 +60,6 @@ def health_check() -> dict[str, str]:
 
     return {"status": "ok"}
 
-
 app.include_router(refuge_router)
+app.include_router(route_router)
 app.include_router(routing_router)
