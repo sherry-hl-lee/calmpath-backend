@@ -150,7 +150,7 @@ def test_only_api_v1_route_is_exposed() -> None:
 
     assert client.post("/api/v1/routes/compare", json=route_request()).status_code == 200
     assert client.post("/routes/compare", json=route_request()).status_code == 404
-    production_paths = {route.path for route in production_app.routes}
+    production_paths = set(production_app.openapi()["paths"])
     assert "/api/v1/routes/compare" in production_paths
     assert "/routes/compare" not in production_paths
 
