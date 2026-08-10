@@ -3,15 +3,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import DATA_DIR
+from app.config import DatabaseSettings
 from app.routes.api import router
-from app.services.data_service import DataRepository
+from app.services.data_service import RdsRepository
 from app.services.routing_service import RoutingService
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    repository = DataRepository(DATA_DIR)
+    repository = RdsRepository(DatabaseSettings.from_environment())
     repository.load()
     app.state.repository = repository
     app.state.routing_service = RoutingService(repository)

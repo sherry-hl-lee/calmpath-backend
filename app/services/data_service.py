@@ -1,16 +1,21 @@
-"""CSV-backed network repository loaded once when the API starts."""
+"""Read-only repository backed by the FIT5120 MySQL RDS data contract."""
 
 from __future__ import annotations
 
-import csv
-import json
+from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional
+from datetime import datetime, timezone
+import json
+from typing import Iterator, Optional
+
+import pymysql
+from pymysql.cursors import DictCursor
+
+from app.config import DatabaseSettings
 
 
 class DataError(RuntimeError):
-    pass
+    """Raised when the RDS data contract cannot be read safely."""
 
 
 @dataclass(frozen=True)
@@ -65,93 +70,210 @@ def _optional_text(value: Optional[str]) -> Optional[str]:
     return value.strip() if value and value.strip() else None
 
 
-def _optional_float(value: Optional[str]) -> Optional[float]:
-    text = _optional_text(value)
-    return float(text) if text is not None else None
+def _geojson(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode("utf-8")
+    return json.loads(str(value))
 
 
-def _read_rows(path: Path):
-    if not path.exists():
-        raise DataError(f"Required data file is missing: {path}")
-    with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        yield from csv.DictReader(handle)
+def _utc_iso(value: object) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return str(value)
 
 
-class DataRepository:
-    def __init__(self, data_dir: Path):
-        self.data_dir = data_dir
+class RdsRepository:
+    """Loads the routing graph once and refreshes live sensor observations per request.
+
+    The graph and hourly patterns are baseline data. Current values are derived
+    from ``clean_pedestrian_minute`` because the contract states that the
+    materialised ``backend_edge_sensory_context_current`` table is not refreshed
+    by the 15-minute job.
+    """
+
+    def __init__(self, settings: DatabaseSettings):
+        self.settings = settings
         self.nodes: dict[str, Node] = {}
         self.edges: dict[str, Edge] = {}
         self.adjacency: dict[str, list[Arc]] = {}
         self.patterns: dict[tuple[str, int, int], HistoricalPattern] = {}
         self.contexts: dict[str, CurrentContext] = {}
+        self.sensor_mapped_edge_ids: set[str] = set()
+
+    @contextmanager
+    def _connection(self) -> Iterator[object]:
+        options = {
+            "host": self.settings.host,
+            "port": self.settings.port,
+            "user": self.settings.user,
+            "password": self.settings.password,
+            "database": self.settings.database,
+            "charset": "utf8mb4",
+            "cursorclass": DictCursor,
+            "autocommit": True,
+            "connect_timeout": self.settings.connect_timeout_seconds,
+            "read_timeout": self.settings.connect_timeout_seconds,
+        }
+        if self.settings.ssl_ca:
+            options["ssl"] = {"ca": self.settings.ssl_ca}
+        try:
+            connection = pymysql.connect(**options)
+            with connection.cursor() as cursor:
+                cursor.execute("SET time_zone = '+00:00'")
+            yield connection
+        except pymysql.MySQLError as error:
+            raise DataError("Unable to read the FIT5120 MySQL RDS database.") from error
+        finally:
+            if "connection" in locals():
+                connection.close()
 
     def load(self) -> None:
-        self._load_nodes()
-        self._load_edges()
-        self._load_patterns()
-        self._load_contexts()
-        if not self.nodes or not self.edges:
-            raise DataError("Routing nodes and edges must not be empty.")
-
-    def _load_nodes(self) -> None:
-        for row in _read_rows(self.data_dir / "routing_nodes.csv"):
-            node = Node(
-                node_id=row["node_id"],
-                latitude=float(row["latitude"]),
-                longitude=float(row["longitude"]),
-            )
-            self.nodes[node.node_id] = node
-
-    def _load_edges(self) -> None:
-        for row in _read_rows(self.data_dir / "routing_edges.csv"):
-            edge = Edge(
-                edge_id=row["edge_id"],
-                from_node_id=row["from_node_id"],
-                to_node_id=row["to_node_id"],
-                length_m=float(row["length_m"]),
-                walk_seconds=float(row["base_walk_cost_seconds"]),
-                is_bidirectional=row["is_bidirectional"].strip().lower() in {"true", "1", "yes"},
-                street_name=_optional_text(row.get("street_name")),
-                between_street_1=_optional_text(row.get("between_street_1")),
-                between_street_2=_optional_text(row.get("between_street_2")),
-                geometry=json.loads(row["geometry_geojson"]),
-            )
-            if edge.from_node_id not in self.nodes or edge.to_node_id not in self.nodes:
-                raise DataError(f"Edge {edge.edge_id} references a missing node.")
-            self.edges[edge.edge_id] = edge
-            self.adjacency.setdefault(edge.from_node_id, []).append(
-                Arc(edge.edge_id, edge.to_node_id, edge.walk_seconds)
-            )
-            if edge.is_bidirectional:
-                self.adjacency.setdefault(edge.to_node_id, []).append(
-                    Arc(edge.edge_id, edge.from_node_id, edge.walk_seconds, traverses_reverse=True)
+        """Load immutable routing data required by the in-memory route solver."""
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT node_id, latitude, longitude FROM backend_routing_nodes"
                 )
+                for row in cursor.fetchall():
+                    node = Node(
+                        node_id=row["node_id"],
+                        latitude=float(row["latitude"]),
+                        longitude=float(row["longitude"]),
+                    )
+                    self.nodes[node.node_id] = node
 
-    def _load_patterns(self) -> None:
-        for row in _read_rows(self.data_dir / "edge_hourly_patterns.csv"):
-            edge_id = row["edge_id"]
-            if edge_id not in self.edges:
-                continue
-            key = (edge_id, int(row["weekday_index"]), int(row["local_hour"]))
-            self.patterns[key] = HistoricalPattern(
-                mean_count=float(row["mean_count"]),
-                sample_count=int(row["sample_count"]),
-                minimum_count=float(row["minimum_count"]),
-                maximum_count=float(row["maximum_count"]),
-            )
+                cursor.execute(
+                    """
+                    SELECT edge_id, from_node_id, to_node_id, length_m,
+                           base_walk_cost_seconds, is_bidirectional,
+                           street_name, between_street_1, between_street_2,
+                           geometry_geojson
+                    FROM backend_routing_edges
+                    """
+                )
+                for row in cursor.fetchall():
+                    edge = Edge(
+                        edge_id=row["edge_id"],
+                        from_node_id=row["from_node_id"],
+                        to_node_id=row["to_node_id"],
+                        length_m=float(row["length_m"]),
+                        walk_seconds=float(row["base_walk_cost_seconds"]),
+                        is_bidirectional=bool(row["is_bidirectional"]),
+                        street_name=_optional_text(row["street_name"]),
+                        between_street_1=_optional_text(row["between_street_1"]),
+                        between_street_2=_optional_text(row["between_street_2"]),
+                        geometry=_geojson(row["geometry_geojson"]),
+                    )
+                    if edge.from_node_id not in self.nodes or edge.to_node_id not in self.nodes:
+                        raise DataError(f"RDS edge {edge.edge_id} references a missing node.")
+                    self.edges[edge.edge_id] = edge
+                    self.adjacency.setdefault(edge.from_node_id, []).append(
+                        Arc(edge.edge_id, edge.to_node_id, edge.walk_seconds)
+                    )
+                    if edge.is_bidirectional:
+                        self.adjacency.setdefault(edge.to_node_id, []).append(
+                            Arc(edge.edge_id, edge.from_node_id, edge.walk_seconds, traverses_reverse=True)
+                        )
 
-    def _load_contexts(self) -> None:
-        for row in _read_rows(self.data_dir / "edge_sensory_context_current.csv"):
-            edge_id = row["edge_id"]
-            if edge_id not in self.edges:
-                continue
-            self.contexts[edge_id] = CurrentContext(
-                crowd_count=_optional_float(row.get("crowd_count")),
-                crowd_level=_optional_text(row.get("crowd_level")),
-                sensory_indicator=_optional_text(row.get("sensory_indicator")),
-                observation_status=row["observation_status"],
-                coverage_status=row["coverage_status"],
-                as_of=_optional_text(row.get("as_of")),
-                source_observed_at=_optional_text(row.get("source_observed_at")),
+                cursor.execute(
+                    """
+                    SELECT edge_id, weekday_index, local_hour, sample_count,
+                           mean_count, minimum_count, maximum_count
+                    FROM backend_edge_hourly_patterns
+                    """
+                )
+                for row in cursor.fetchall():
+                    key = (row["edge_id"], int(row["weekday_index"]), int(row["local_hour"]))
+                    self.patterns[key] = HistoricalPattern(
+                        mean_count=float(row["mean_count"]),
+                        sample_count=int(row["sample_count"]),
+                        minimum_count=float(row["minimum_count"]),
+                        maximum_count=float(row["maximum_count"]),
+                    )
+
+                cursor.execute(
+                    "SELECT DISTINCT edge_id FROM backend_sensor_edge_map WHERE edge_id IS NOT NULL"
+                )
+                self.sensor_mapped_edge_ids = {row["edge_id"] for row in cursor.fetchall()}
+
+        if not self.nodes or not self.edges:
+            raise DataError("RDS routing nodes and edges must not be empty.")
+        self.refresh_current_contexts()
+
+    def refresh_current_contexts(self) -> None:
+        """Derive fresh edge observations from the 15-minute minute-count table.
+
+        For an edge with more than one current mapped sensor, the crowd count is
+        the arithmetic mean of the current ``count_total`` values. This avoids
+        double-counting pedestrians from nearby sensors; it is a documented
+        prototype aggregation rule that should be approved before production.
+        """
+        query = """
+            WITH latest_observation AS (
+                SELECT location_id, MAX(observed_at_utc) AS observed_at_utc
+                FROM clean_pedestrian_minute
+                GROUP BY location_id
+            ),
+            latest_count AS (
+                SELECT p.location_id, p.observed_at_utc, p.count_total
+                FROM clean_pedestrian_minute AS p
+                JOIN latest_observation AS latest
+                  ON latest.location_id = p.location_id
+                 AND latest.observed_at_utc = p.observed_at_utc
             )
+            SELECT
+                map.edge_id,
+                MAX(counts.observed_at_utc) AS source_observed_at,
+                MIN(TIMESTAMPDIFF(SECOND, counts.observed_at_utc, UTC_TIMESTAMP())) AS newest_age_seconds,
+                COUNT(DISTINCT CASE
+                    WHEN counts.observed_at_utc >= UTC_TIMESTAMP() - INTERVAL 30 MINUTE
+                    THEN map.location_id
+                END) AS current_sensor_count,
+                AVG(CASE
+                    WHEN counts.observed_at_utc >= UTC_TIMESTAMP() - INTERVAL 30 MINUTE
+                    THEN counts.count_total
+                END) AS current_crowd_count
+            FROM backend_sensor_edge_map AS map
+            LEFT JOIN latest_count AS counts
+              ON counts.location_id = map.location_id
+            WHERE map.edge_id IS NOT NULL
+            GROUP BY map.edge_id
+        """
+        contexts: dict[str, CurrentContext] = {}
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query)
+                rows = cursor.fetchall()
+
+        evaluated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        for row in rows:
+            current_sensor_count = int(row["current_sensor_count"] or 0)
+            newest_age_seconds = row["newest_age_seconds"]
+            if current_sensor_count:
+                observation_status = "CURRENT"
+                coverage_status = "OBSERVED"
+                crowd_count = float(row["current_crowd_count"])
+            elif newest_age_seconds is not None and newest_age_seconds <= 3600:
+                observation_status = "STALE"
+                coverage_status = "STALE_OBSERVATION"
+                crowd_count = None
+            else:
+                observation_status = "UNAVAILABLE"
+                coverage_status = "UNAVAILABLE_OBSERVATION"
+                crowd_count = None
+            contexts[row["edge_id"]] = CurrentContext(
+                crowd_count=crowd_count,
+                crowd_level=None,
+                sensory_indicator=None,
+                observation_status=observation_status,
+                coverage_status=coverage_status,
+                as_of=evaluated_at,
+                source_observed_at=_utc_iso(row["source_observed_at"]),
+            )
+        self.contexts = contexts

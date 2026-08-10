@@ -43,13 +43,17 @@ class RouteResponse(BaseModel):
     distance_m: float
     walk_time_seconds: float
     crowd_exposure: float
+    routing_crowd_cost: float
+    known_edge_count: int
     unknown_edge_count: int
+    data_coverage_ratio: float
     geometry: dict
 
 
 class RouteCompareResponse(BaseModel):
     requested_weekday_index: int
     requested_local_hour: int
+    current_data_used: bool
     origin_node_id: str
     destination_node_id: str
     shortest_route: RouteResponse

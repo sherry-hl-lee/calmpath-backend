@@ -8,13 +8,14 @@ from dataclasses import dataclass
 from typing import Callable
 
 from app.config import CROWD_WEIGHT_SECONDS, UNKNOWN_CROWD_PENALTY
-from app.services.data_service import Arc, DataRepository
+from app.services.data_service import Arc, RdsRepository
 
 
 def congestion_level(score: float) -> str:
-    if score >= 100:
+    # FIT5120 RDS contract provisional thresholds.
+    if score > 70:
         return "HIGH"
-    if score >= 50:
+    if score > 35:
         return "MEDIUM"
     return "LOW"
 
@@ -37,12 +38,16 @@ class PathResult:
 
 
 class RoutingService:
-    def __init__(self, repository: DataRepository):
+    def __init__(self, repository: RdsRepository):
         self.repository = repository
 
-    def crowd_for_edge(self, edge_id: str, weekday_index: int, local_hour: int) -> CrowdValue:
+    def crowd_for_edge(
+        self, edge_id: str, weekday_index: int, local_hour: int, use_current: bool = True
+    ) -> CrowdValue:
         context = self.repository.contexts.get(edge_id)
         if (
+            use_current
+            and
             context
             and context.observation_status == "CURRENT"
             and context.coverage_status == "OBSERVED"
@@ -75,8 +80,8 @@ class RoutingService:
             level="UNKNOWN",
             source="unknown",
             is_unknown=True,
-            observation_status=context.observation_status if context else None,
-            coverage_status=context.coverage_status if context else None,
+            observation_status=context.observation_status if context else "NO_RECENT_OBSERVATION",
+            coverage_status=context.coverage_status if context else "NO_SENSOR_COVERAGE",
             as_of=context.as_of if context else None,
             sensory_indicator=context.sensory_indicator if context else None,
         )
@@ -121,10 +126,20 @@ class RoutingService:
         arcs.reverse()
         return PathResult(arcs)
 
-    def route_summary(self, path: PathResult, route_type: str, weekday_index: int, local_hour: int) -> dict:
+    def route_summary(
+        self,
+        path: PathResult,
+        route_type: str,
+        weekday_index: int,
+        local_hour: int,
+        use_current: bool,
+    ) -> dict:
         edge_ids = [arc.edge_id for arc in path.arcs]
         edges = [self.repository.edges[edge_id] for edge_id in edge_ids]
-        crowds = [self.crowd_for_edge(edge_id, weekday_index, local_hour) for edge_id in edge_ids]
+        crowds = [
+            self.crowd_for_edge(edge_id, weekday_index, local_hour, use_current)
+            for edge_id in edge_ids
+        ]
         coordinates: list[list[float]] = []
         for edge, arc in zip(edges, path.arcs):
             line = edge.geometry.get("coordinates", [])
@@ -139,7 +154,16 @@ class RoutingService:
             "edge_ids": edge_ids,
             "distance_m": round(sum(edge.length_m for edge in edges), 2),
             "walk_time_seconds": round(sum(edge.walk_seconds for edge in edges), 2),
-            "crowd_exposure": round(sum(value.score for value in crowds), 2),
+            # Exposure is evidence-backed only. The separate routing cost keeps
+            # the unknown penalty transparent rather than presenting it as a
+            # measured pedestrian count.
+            "crowd_exposure": round(sum(value.score for value in crowds if not value.is_unknown), 2),
+            "routing_crowd_cost": round(sum(value.score for value in crowds), 2),
+            "known_edge_count": sum(not value.is_unknown for value in crowds),
             "unknown_edge_count": sum(value.is_unknown for value in crowds),
+            "data_coverage_ratio": round(
+                sum(not value.is_unknown for value in crowds) / len(crowds) if crowds else 0.0,
+                4,
+            ),
             "geometry": {"type": "LineString", "coordinates": coordinates},
         }
