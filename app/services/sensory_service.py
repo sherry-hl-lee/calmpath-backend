@@ -76,7 +76,10 @@ class RdsSensoryDataSource:
         self._loaded_at = 0.0
 
     async def _refresh_if_needed(self) -> None:
-        if time.monotonic() - self._loaded_at < SENSORY_RDS_CACHE_SECONDS:
+        if (
+            self._loaded_at > 0
+            and time.monotonic() - self._loaded_at < SENSORY_RDS_CACHE_SECONDS
+        ):
             return
         try:
             rows = await asyncio.to_thread(
