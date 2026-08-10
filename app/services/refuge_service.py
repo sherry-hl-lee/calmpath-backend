@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import math
 
 from app.core.database import DatabaseClient, MySQLClient

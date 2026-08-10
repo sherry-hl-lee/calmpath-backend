@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from app.core.database import DatabaseClient, MySQLClient
 from app.schemas.refuge import RefugeAddress
 
