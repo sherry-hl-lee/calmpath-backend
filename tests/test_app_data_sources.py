@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import DatabaseSettings, data_source_from_environment
+from app.core.routing_config import DatabaseSettings, data_source_from_environment
 from app.main import app, create_repository
 from app.services.fake_repository import FakeRepository
 

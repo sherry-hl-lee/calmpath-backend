@@ -1,1 +1,1 @@
-"""Sensory-friendly routing API package."""
+"""CalmPath backend package."""

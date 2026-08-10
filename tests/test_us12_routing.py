@@ -5,9 +5,9 @@ from contextlib import contextmanager
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.config import DatabaseSettings, cors_allowed_origins
+from app.core.routing_config import DatabaseSettings, cors_allowed_origins
 from app.main import app as production_app
-from app.routes.api import router
+from app.api.routes.routing import router
 from app.services.data_service import (
     Arc,
     CurrentContext,
@@ -79,7 +79,7 @@ def api_client() -> tuple[TestClient, FakeRepository]:
     app = FastAPI()
     app.state.repository = repository
     app.state.routing_service = RoutingService(repository)
-    app.include_router(router, prefix="/api/v1")
+    app.include_router(router)
     return TestClient(app), repository
 
 

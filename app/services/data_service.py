@@ -11,7 +11,7 @@ from typing import Iterator, Optional
 import pymysql
 from pymysql.cursors import DictCursor
 
-from app.config import DatabaseSettings
+from app.core.routing_config import DatabaseSettings
 
 
 class DataError(RuntimeError):

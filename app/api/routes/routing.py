@@ -5,16 +5,16 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from app.config import (
+from app.core.routing_config import (
     CROWD_SCORE_UNIT,
     LIVE_REQUEST_WINDOW_MINUTES,
     MELBOURNE_TIMEZONE,
     MINIMUM_CROWD_COVERAGE_FOR_RECOMMENDATION,
 )
-from app.schemas import EdgeResponse, RouteCompareRequest, RouteCompareResponse
+from app.schemas.routing import EdgeResponse, RouteCompareRequest, RouteCompareResponse
 from app.services.routing_service import RoutingService
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1", tags=["routing"])
 
 
 def service(request: Request) -> RoutingService:

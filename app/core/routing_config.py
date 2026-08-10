@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
 
 
 MELBOURNE_TIMEZONE = "Australia/Melbourne"
@@ -42,6 +49,7 @@ def cors_allowed_origins() -> list[str]:
     default_origins = (
         "http://localhost:3000,http://127.0.0.1:3000,"
         "http://localhost:5173,http://127.0.0.1:5173,"
+        "https://fit5120-2026s2-tp10.github.io,"
         "https://dpevp4238kw5k.cloudfront.net,"
         "https://calmpath-tp10.netlify.app"
     )

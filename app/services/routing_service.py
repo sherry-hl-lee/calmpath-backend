@@ -7,7 +7,7 @@ import math
 from dataclasses import dataclass
 from typing import Callable
 
-from app.config import (
+from app.core.routing_config import (
     CROWD_LOW_MAX_PER_MINUTE,
     CROWD_MEDIUM_MAX_PER_MINUTE,
     CROWD_SCORE_UNIT,
