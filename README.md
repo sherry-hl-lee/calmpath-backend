@@ -1,8 +1,142 @@
 # CalmPath Backend
 
-FastAPI backend for the US1.2 crowd-avoidance prototype. It reads the FIT5120
-MySQL RDS contract, estimates edge-level crowding, and compares the shortest
-walking route with a lower-crowd alternative.
+A FastAPI backend for sensory-aware pedestrian route planning in
+Melbourne, designed to compare walking routes using crowd exposure and
+access to lower-stimulation locations.
+
+## Overview
+
+CalmPath is a team-developed urban navigation project that explores how
+pedestrian routing can account for sensory conditions in addition to
+distance.
+
+The backend combines route geometry, pedestrian/crowd information, and
+refuge-location data through REST APIs that can be consumed by the
+CalmPath frontend.
+
+A key design principle is to avoid treating missing crowd information as
+evidence of low congestion. Where coverage is insufficient, the system
+can communicate limited-data conditions instead of presenting uncertain
+information as reliable.
+
+## Tech Stack
+
+-   Python
+-   FastAPI
+-   REST APIs
+-   MySQL
+-   AWS RDS
+-   Docker
+-   AWS deployment infrastructure
+-   Pytest
+-   OpenRouteService
+-   GTFS / public-transport data
+-   GitHub Actions / CI configuration
+
+## High-Level Architecture
+
+``` text
+CalmPath Frontend
+       |
+       | REST / JSON
+       v
+   FastAPI API
+       |
+       +--------------------+
+       |                    |
+       v                    v
+ Routing Service       Crowd / Data Services
+       |                    |
+       v                    v
+OpenRouteService       MySQL / AWS RDS
+       |
+       +----------+
+                  |
+                  v
+        Route Comparison Result
+```
+
+## Key Features
+
+-   Walking-route comparison
+-   Crowd-aware route assessment
+-   Historical/current pedestrian-data integration
+-   Explicit handling of incomplete data coverage
+-   Nearby low-sensory refuge discovery
+-   Address/location enrichment
+-   Tram and train accessibility information
+-   REST endpoints for frontend integration
+-   Local/test data modes
+-   Automated backend testing
+-   Dockerised deployment support
+
+## Engineering Highlights
+
+### Crowd-Aware Routing
+
+The backend supports comparing pedestrian routes using crowd exposure
+rather than relying only on shortest distance, enabling the frontend to
+present lower-stimulation alternatives.
+
+### Incomplete-Data Handling
+
+Unknown pedestrian conditions are not automatically interpreted as low
+crowding. This reduces the risk of producing misleading recommendations
+when data coverage is insufficient.
+
+### API-Oriented Architecture
+
+Routing, crowd information, and refuge discovery are exposed through
+REST interfaces so that frontend and backend components can evolve
+independently.
+
+### Testable Development
+
+The repository includes automated tests and development configuration
+intended to support repeatable backend validation without requiring
+every production dependency during local development.
+
+## Example API Areas
+
+Depending on the current repository version, the backend exposes API
+functionality for areas such as:
+
+``` text
+GET   /health
+GET   /api/v1/refuges/nearby
+GET   /api/v1/edges/{edge_id}
+POST  /api/v1/routes/compare
+```
+
+Refer to the FastAPI-generated API documentation in the running
+application for the current contract.
+
+## Related Repository
+
+**Frontend:**\
+https://github.com/sherry-hl-lee/calmpath-frontend
+
+## Testing
+
+A typical test command is:
+
+``` bash
+python -m pytest -q
+```
+
+Use the repository's current dependency/environment configuration before
+running the suite.
+
+## Project Context
+
+Developed as part of the **CalmPath Monash University capstone
+project**.
+
+CalmPath was built collaboratively by a student software development
+team. This README describes the overall backend system; the **My
+Contributions** section should identify individual ownership separately.
+
+
 
 ## Setup and run
 
